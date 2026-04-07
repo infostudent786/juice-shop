@@ -21,7 +21,7 @@ pipeline {
         stage('Git Checkout') {
             steps {
                 echo "📦 Cloning Juice Shop repository..."
-                git branch: 'master', url: 'https://github.com/infostudent786/juice-shop.git'
+                git branch: 'master', url: 'https://github.com/juice-shop/juice-shop.git'
                 sh 'mkdir -p ${REPORTS_DIR}'
                 // Note: jmeter-test.jmx and ai-dashboard.py should already exist in the repo root
             }
@@ -29,10 +29,16 @@ pipeline {
 
         stage('Clean Environment') {
             steps {
-                echo "🧹 Cleaning previous containers and reports..."
+                echo "🧹 Cleaning previous containers, images, and reports..."
                 sh '''
+                    # Stop and remove existing container
                     docker stop juice-shop || true
                     docker rm juice-shop || true
+                    
+                    # Remove dangling images to save disk space
+                    docker image prune -f || true
+                    
+                    # Reset reports directory
                     rm -rf ${REPORTS_DIR}/*
                     mkdir -p ${REPORTS_DIR}
                 '''
@@ -154,6 +160,10 @@ pipeline {
             steps {
                 echo "🤖 Generating AI Security Insights (Rule-Based Engine)..."
                 sh '''
+                    # Ensure the reports directory exists
+                    mkdir -p ${REPORTS_DIR}
+                    
+                    # Run the dashboard script
                     if [ -f ai-dashboard.py ]; then
                         python3 ai-dashboard.py
                     else
