@@ -55,22 +55,33 @@ pipeline {
             }
         }
 
+        /* 
+        // OPTIONAL: OWASP Dependency Check (Slow without API Key)
         stage('SCA — OWASP Dependency Check') {
             steps {
                 echo "🔍 Running OWASP Dependency Check (SCA)..."
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh '''
-                        if [ ! -f package-lock.json ]; then
-                            echo "Generating package-lock.json..."
-                            npm install --package-lock-only
-                        fi
-                    '''
+                    // Requires NVD API Key for performance
                     dependencyCheck(
                         additionalArguments: '--scan . --format ALL --out ${REPORTS_DIR} --disableAssembly',
                         odcInstallation: 'owasp'
                     )
                     dependencyCheckPublisher pattern: 'reports/dependency-check-report.xml'
                 }
+            }
+        }
+        */
+
+        stage('SCA — NPM Audit (Instant Scan)') {
+            steps {
+                echo "⚡ Running npm audit (Security Scan)..."
+                sh '''
+                    # Generate npm audit JSON report for the AI Dashboard
+                    npm audit --json > ${REPORTS_DIR}/npm-audit.json || true
+                    
+                    # Print summary for Jenkins logs
+                    npm audit || true
+                '''
             }
         }
 
@@ -99,6 +110,7 @@ pipeline {
                                 "${SONAR_URL}/api/issues/search?projectKeys=${SONAR_PROJECT_KEY}&severities=CRITICAL,BLOCKER&resolved=false" \
                                 | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total',0))" 2>/dev/null || echo "0")
                             
+                            # Using 'npm-audit.json' as the source for SCA results now
                             echo "{\\"critical\\": ${SONAR_CRITICAL}, \\"major\\": 0, \\"minor\\": 0}" > ${REPORTS_DIR}/sonar-summary.json
                         '''
                     }
