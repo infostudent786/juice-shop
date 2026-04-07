@@ -21,7 +21,7 @@ pipeline {
         stage('Git Checkout') {
             steps {
                 echo "📦 Cloning Juice Shop repository..."
-                git branch: 'master', url: 'https://github.com/juice-shop/juice-shop.git'
+                git branch: 'master', url: 'https://github.com/infostudent786/juice-shop.git'
                 sh 'mkdir -p ${REPORTS_DIR}'
                 // Note: jmeter-test.jmx and ai-dashboard.py should already exist in the repo root
             }
