@@ -17,29 +17,37 @@ def load_json(filename):
             print(f"Error loading {filename}: {e}")
     return None
 
-def parse_npm_audit(filename):
+def parse_npm_audit_detailed(filename):
     path = os.path.join(REPORTS_DIR, filename)
-    sca_summary = {"total": 0, "critical": 0, "high": 0, "medium": 0, "low": 0}
+    sca_summary = {"total": 0, "critical": 0, "high": 0, "medium": 0, "low": 0, "findings": []}
     if os.path.exists(path):
         try:
             with open(path, 'r') as f:
                 data = json.load(f)
                 
-                # Check for metadata structure (npm 7+)
                 if "metadata" in data and "vulnerabilities" in data["metadata"]:
                     vulns = data["metadata"]["vulnerabilities"]
                     sca_summary["critical"] = vulns.get("critical", 0)
                     sca_summary["high"] = vulns.get("high", 0)
-                    sca_summary["medium"] = vulns.get("moderate", 0) # npm uses 'moderate'
+                    sca_summary["medium"] = vulns.get("moderate", 0)
                     sca_summary["low"] = vulns.get("low", 0)
                     sca_summary["total"] = vulns.get("total", 0)
+                
+                # Extract detailed findings (vulnerabilities list in npm 7+)
+                if "vulnerabilities" in data:
+                    for pkg, details in data["vulnerabilities"].items():
+                        sca_summary["findings"].append({
+                            "package": pkg,
+                            "severity": details.get("severity", "unknown").upper(),
+                            "fix": details.get("fixAvailable", "Manual Update Required")
+                        })
         except Exception as e:
             print(f"Error parsing {filename}: {e}")
     return sca_summary
 
-def parse_zap_report(filename):
+def parse_zap_detailed(filename):
     data = load_json(filename)
-    zap_summary = {"total": 0, "high": 0, "medium": 0, "low": 0, "informational": 0}
+    zap_summary = {"total": 0, "high": 0, "medium": 0, "low": 0, "informational": 0, "findings": []}
     if data and "site" in data:
         for site in data["site"]:
             for alert in site.get("alerts", []):
@@ -49,11 +57,19 @@ def parse_zap_report(filename):
                 elif risk == "Medium": zap_summary["medium"] += 1
                 elif risk == "Low": zap_summary["low"] += 1
                 elif risk == "Informational": zap_summary["informational"] += 1
+                
+                instances = [inst.get("uri", "") for inst in alert.get("instances", [])]
+                zap_summary["findings"].append({
+                    "name": alert.get("alert", "N/A"),
+                    "risk": risk.upper(),
+                    "solution": alert.get("solution", "N/A"),
+                    "instances": instances[:5] # Top 5 URLs
+                })
     return zap_summary
 
-def parse_jmeter_results(filename):
+def parse_jmeter_detailed(filename):
     path = os.path.join(REPORTS_DIR, filename)
-    perf_summary = {"samples": 0, "errors": 0, "avg_rt": 0, "max_rt": 0}
+    perf_summary = {"samples": 0, "errors": 0, "avg_rt": 0, "max_rt": 0, "endpoints": {}}
     if os.path.exists(path):
         try:
             with open(path, 'r') as f:
@@ -63,10 +79,24 @@ def parse_jmeter_results(filename):
                     for line in lines:
                         parts = line.split(",")
                         if len(parts) >= 8:
+                            label = parts[2]
+                            rt = int(parts[1])
+                            success = parts[7] == "true"
+                            
                             perf_summary["samples"] += 1
-                            rts.append(int(parts[1]))
-                            if parts[7] == "false":
-                                perf_summary["errors"] += 1
+                            rts.append(rt)
+                            if not success: perf_summary["errors"] += 1
+                            
+                            if label not in perf_summary["endpoints"]:
+                                perf_summary["endpoints"][label] = {"count": 0, "total_rt": 0, "errors": 0, "min": rt, "max": rt}
+                            
+                            e = perf_summary["endpoints"][label]
+                            e["count"] += 1
+                            e["total_rt"] += rt
+                            e["min"] = min(e["min"], rt)
+                            e["max"] = max(e["max"], rt)
+                            if not success: e["errors"] += 1
+
                     if rts:
                         perf_summary["avg_rt"] = sum(rts) / len(rts)
                         perf_summary["max_rt"] = max(rts)
@@ -75,163 +105,142 @@ def parse_jmeter_results(filename):
     return perf_summary
 
 def generate_dashboard():
-    # 1. Parse all results
-    # Switching from OWASP XML to NPM Audit JSON for speed
-    sca = parse_npm_audit("npm-audit.json")
-    zap = parse_zap_report("zap-report.json")
-    perf = parse_jmeter_results("jmeter-results.jtl")
-    # For Sonar, we'll assume a summary is provided or we'll mock it if not available
-    sonar = load_json("sonar-summary.json") or {"critical": 0, "major": 0, "minor": 0}
+    # 1. Parse all results with full detail
+    sca = parse_npm_audit_detailed("npm-audit.json")
+    zap = parse_zap_detailed("zap-report.json")
+    perf = parse_jmeter_detailed("jmeter-results.jtl")
+    sonar_summary = load_json("sonar-summary.json") or {"critical": 0, "major": 0}
+    sonar_issues = load_json("sonar-issues.json") or {"issues": []}
 
-    # 2. Rule-Based AI Logic
-    recommendations = []
-    risk_level = "LOW"
+    # 2. Risk Scoring
+    score = 100
+    score -= (sca["critical"] * 10 + sca["high"] * 5)
+    score -= (sonar_summary["critical"] * 10 + sonar_summary["major"] * 3)
+    score -= (zap["high"] * 15 + zap["medium"] * 5)
+    score = max(0, score)
     
-    if sca["critical"] > 0 or sonar["critical"] > 0 or zap["high"] > 0:
-        risk_level = "CRITICAL"
-        recommendations.append({"priority": "HIGH", "issue": "Critical vulnerabilities detected in code/dependencies", "fix": "Immediate remediation required for production deployment."})
-    elif sca["high"] > 0 or zap["medium"] > 0:
-        risk_level = "HIGH"
-        recommendations.append({"priority": "MEDIUM", "issue": "High severity security findings", "fix": "Address high-priority issues within 48 hours."})
-    
-    if perf["errors"] > (perf["samples"] * 0.05):
-        recommendations.append({"priority": "HIGH", "issue": f"High error rate in performance test ({perf['errors']} errors)", "fix": "Re-check server stability and database connections."})
-    
-    if perf["avg_rt"] > 1000:
-        recommendations.append({"priority": "LOW", "issue": "High average response latency", "fix": "Investigate frontend bundling and API response times."})
+    grade = "A" if score > 90 else "B" if score > 75 else "C" if score > 50 else "D" if score > 25 else "F"
+    color = "#34d399" if grade == "A" else "#fbbf24" if grade in ["B", "C"] else "#fb7185"
 
-    # 3. Build HTML (Ultra-Premium Aesthetics)
+    # 3. Build HTML with INLINE STYLES for Jenkins CSP compatibility
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Pre-calculate UI blocks
+    sonar_rows = "".join([f'<tr><td style="padding:12px; border-bottom:1px solid #334155;">{i.get("message","N/A")}</td><td style="padding:12px; border-bottom:1px solid #334155; font-family:monospace; font-size:0.85em; color:#94a3b8;">{i.get("component","N/A").split(":")[-1]}</td></tr>' for i in sonar_issues.get("issues", [])])
+    sca_rows = "".join([f'<tr><td style="padding:12px; border-bottom:1px solid #334155;">{f["package"]}</td><td style="padding:12px; border-bottom:1px solid #334155;"><span style="color:{"#fb7185" if f["severity"]=="CRITICAL" else "#f97316"}; font-weight:bold;">{f["severity"]}</span></td><td style="padding:12px; border-bottom:1px solid #334155; color:#94a3b8;">{f["fix"]}</td></tr>' for f in sca["findings"][:20]])
+    zap_rows = "".join([f'<tr><td style="padding:12px; border-bottom:1px solid #334155; font-weight:bold;">{f["name"]}</td><td style="padding:12px; border-bottom:1px solid #334155; color:{"#fb7185" if f["risk"]=="HIGH" else "#f97316"};">{f["risk"]}</td><td style="padding:12px; border-bottom:1px solid #334155; font-size:0.9em;">{f["solution"]}</td></tr>' for f in zap["findings"]])
+    perf_rows = "".join([f'<tr><td style="padding:12px; border-bottom:1px solid #334155; font-family:monospace; font-size:0.85em;">{k}</td><td style="padding:12px; border-bottom:1px solid #334155;">{v["count"]}</td><td style="padding:12px; border-bottom:1px solid #334155;">{int(v["total_rt"]/v["count"])}ms</td><td style="padding:12px; border-bottom:1px solid #334155; color:{"#fb7185" if v["errors"]>0 else "#34d399"};">{v["errors"]}</td></tr>' for k,v in perf.get("endpoints", {}).items()])
+
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>DevSecOps Intelligence Suite — AI Dashboard</title>
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
-            :root {{
-                --bg: #030712; --card: rgba(30, 41, 59, 0.7); --border: rgba(51, 65, 85, 0.5);
-                --primary: #22d3ee; --success: #34d399; --warning: #fbbf24; --error: #fb7185; --text: #f8fafc;
-            }}
-            body {{ font-family: 'Outfit', sans-serif; background: radial-gradient(circle at top left, #1e1b4b, #030712); color: var(--text); margin: 0; padding: 0; min-height: 100vh; overflow-x: hidden; }}
-            .container {{ max-width: 1400px; margin: auto; padding: 40px 20px; }}
-            
-            /* Glassmorphism Header */
-            header {{ 
-                display: flex; justify-content: space-between; align-items: center; padding-bottom: 40px; margin-bottom: 60px;
-                border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 100;
-            }}
-            h1 {{ font-size: 2.2rem; font-weight: 700; background: linear-gradient(90deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; }}
-            .timestamp {{ font-size: 0.9rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; }}
-            
-            /* Metric Grid */
-            .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px; margin-bottom: 60px; }}
-            .stat-card {{ 
-                background: var(--card); border: 1px solid var(--border); border-radius: 24px; padding: 35px;
-                backdrop-filter: blur(8px); position: relative; overflow: hidden; transition: transform 0.3s;
-            }}
-            .stat-card:hover {{ transform: translateY(-8px); border-color: var(--primary); }}
-            .stat-card h3 {{ font-size: 1rem; color: #94a3b8; margin: 0 0 15px 0; text-transform: uppercase; letter-spacing: 0.05em; }}
-            .stat-value {{ font-size: 3.5rem; font-weight: 700; color: #fff; line-height: 1; }}
-            .stat-card.risk-CRITICAL {{ border-top: 6px solid var(--error); }}
-            .stat-card.risk-HIGH {{ border-top: 6px solid #f97316; }}
-            .stat-card.risk-LOW {{ border-top: 6px solid var(--success); }}
-            
-            /* AI Insights Section */
-            .ai-block {{ 
-                background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%); border-radius: 32px; padding: 45px; 
-                border: 1px solid var(--primary); box-shadow: 0 0 40px rgba(34, 211, 238, 0.2); margin-bottom: 60px;
-            }}
-            .ai-badge {{ background: var(--primary); color: #000; padding: 6px 16px; border-radius: 99px; font-weight: bold; font-size: 0.8rem; vertical-align: middle; }}
-            .rec-list {{ margin-top: 30px; }}
-            .rec-card {{ background: rgba(255, 255, 255, 0.03); padding: 25px; border-radius: 20px; border: 1px solid var(--border); margin-bottom: 20px; display: flex; align-items: start; gap: 20px; }}
-            .rec-icon {{ font-size: 1.5rem; width: 40px; }}
-            .rec-body h4 {{ margin: 0 0 5px 0; font-size: 1.1rem; color: #fff; }}
-            .rec-fix {{ font-size: 0.9rem; color: var(--primary); margin-top: 10px; font-weight: 600; opacity: 0.8; }}
-            
-            /* Tables */
-            .data-section {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 40px; }}
-            .table-wrap {{ background: var(--card); border-radius: 24px; padding: 30px; border: 1px solid var(--border); }}
-            table {{ width: 100%; border-collapse: collapse; }}
-            th {{ text-align: left; padding: 15px; font-size: 0.8rem; color: #94a3b8; text-transform: uppercase; border-bottom: 1px solid var(--border); }}
-            td {{ padding: 18px 15px; font-size: 1rem; color: #f1f5f9; border-bottom: 1px solid rgba(255,255,255,0.05); }}
-            .bar-container {{ width: 100px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; display: inline-block; margin-right: 15px; vertical-align: middle; }}
-            .bar-fill {{ height: 100%; border-radius: 3px; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <header>
-                <div>
-                    <h1>Security Intelligence Suite</h1>
-                    <p class="timestamp">Session: {now} | Target: 65.1.109.17</p>
+    <body style="background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0;">
+        <div style="display: flex; min-height: 100vh;">
+            <!-- SIDEBAR -->
+            <div style="width: 260px; background-color: #1e293b; border-right: 1px solid #334155; padding: 30px 20px; position: fixed; height: 100vh;">
+                <h2 style="color: #22d3ee; margin-top: 0; font-size: 1.4rem; letter-spacing: -0.02em;">🛡️ SHIVA AI</h2>
+                <div style="margin-top: 40px;">
+                    <a href="#overview" style="display: block; color: #cbd5e1; text-decoration: none; padding: 12px 0; font-weight: 500;">📊 Executive Overview</a>
+                    <a href="#sast" style="display: block; color: #cbd5e1; text-decoration: none; padding: 12px 0; font-weight: 500;">🔍 SAST (Sonar)</a>
+                    <a href="#sca" style="display: block; color: #cbd5e1; text-decoration: none; padding: 12px 0; font-weight: 500;">📦 SCA (Dependencies)</a>
+                    <a href="#dast" style="display: block; color: #cbd5e1; text-decoration: none; padding: 12px 0; font-weight: 500;">🕷️ DAST (ZAP Full)</a>
+                    <a href="#perf" style="display: block; color: #cbd5e1; text-decoration: none; padding: 12px 0; font-weight: 500;">⚡ Performance</a>
                 </div>
-                <div class="ai-badge">GEN-AI ANALYST v2.0</div>
-            </header>
-
-            <div class="grid">
-                <div class="stat-card risk-{risk_level}">
-                    <h3>Risk Posture</h3>
-                    <div class="stat-value">{risk_level}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Code/SCA Vulnerabilities</h3>
-                    <div class="stat-value">{sca['critical'] + sca['high'] + sonar['critical']}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>ZAP High Alerts</h3>
-                    <div class="stat-value">{zap['high']}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Performance (Avg)</h3>
-                    <div class="stat-value">{int(perf['avg_rt'])}<span style="font-size: 1.5rem; color: #94a3b8;">ms</span></div>
+                <div style="position: absolute; bottom: 30px; font-size: 0.8rem; color: #64748b;">
+                    v3.0 PRO ENHANCED<br>Generated: {now}
                 </div>
             </div>
 
-            <div class="ai-block">
-                <h2 style="margin:0; font-size: 1.8rem; display:flex; align-items:center; gap:15px;">
-                    <span style="font-size: 2.5rem;">🧠</span> AI Security Forensics & Recommendations
-                </h2>
-                <div class="rec-list">
-                    {''.join([f'''
-                    <div class="rec-card">
-                        <div class="rec-icon">{'🚨' if r['priority']=='HIGH' else '⚠️'}</div>
-                        <div class="rec-body">
-                            <h4>{r['issue']}</h4>
-                            <div style="font-size: 0.95rem; color: #94a3b8;">{r['fix']}</div>
-                            <div class="rec-fix">Primary Action: Patch and Re-scan in Pipeline</div>
+            <!-- MAIN CONTENT -->
+            <div style="margin-left: 260px; padding: 60px; width: 100%;">
+                <div id="overview" style="margin-bottom: 60px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px;">
+                        <div>
+                            <h1 style="margin: 0; font-size: 2.5rem; font-weight: 800; background: linear-gradient(90deg, #22d3ee, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Security Intelligence Hub</h1>
+                            <p style="color: #94a3b8; margin-top: 8px;">Full Audit Report for OWASP Juice Shop | Target: 65.1.109.17</p>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 4px;">SECURITY GRADE</div>
+                            <div style="font-size: 3.5rem; font-weight: 900; color: {color}; line-height: 1;">{grade}</div>
                         </div>
                     </div>
-                    ''' for r in recommendations]) if recommendations else '<p style="color: var(--success); font-size: 1.2rem; padding-top: 20px;">✓ Environment validated. All security and performance gate checks passed.</p>'}
-                </div>
-            </div>
 
-            <div class="data-section">
-                <div class="table-wrap">
-                    <h3>SCA Vulnerabilities (npm audit)</h3>
-                    <table>
-                        <tr><th>Severity</th><th>Progress</th><th>Count</th></tr>
-                        <tr><td>Critical</td><td><div class="bar-container"><div class="bar-fill" style="width: {min(100, sca['critical']*20)}%; background: var(--error);"></div></div></td><td>{sca['critical']}</td></tr>
-                        <tr><td>High</td><td><div class="bar-container"><div class="bar-fill" style="width: {min(100, sca['high']*10)}%; background: #f97316;"></div></div></td><td>{sca['high']}</td></tr>
-                        <tr><td>Medium</td><td><div class="bar-container"><div class="bar-fill" style="width: {min(100, sca['medium']*5)}%; background: var(--warning);"></div></div></td><td>{sca['medium']}</td></tr>
-                    </table>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;">
+                        <div style="background: #1e293b; padding: 24px; border-radius: 16px; border: 1px solid #334155;">
+                            <div style="font-size: 0.85rem; color: #94a3b8; text-transform: uppercase;">Sonar Issues</div>
+                            <div style="font-size: 2rem; font-weight: 700; margin-top: 10px;">{sonar_summary['critical']} Critical</div>
+                        </div>
+                        <div style="background: #1e293b; padding: 24px; border-radius: 16px; border: 1px solid #334155;">
+                            <div style="font-size: 0.85rem; color: #94a3b8; text-transform: uppercase;">SCA Vulns</div>
+                            <div style="font-size: 2rem; font-weight: 700; margin-top: 10px;">{sca['total']} Total</div>
+                        </div>
+                        <div style="background: #1e293b; padding: 24px; border-radius: 16px; border: 1px solid #334155;">
+                            <div style="font-size: 0.85rem; color: #94a3b8; text-transform: uppercase;">ZAP Alerts</div>
+                            <div style="font-size: 2rem; font-weight: 700; margin-top: 10px;">{zap['high']} High</div>
+                        </div>
+                        <div style="background: #1e293b; padding: 24px; border-radius: 16px; border: 1px solid #334155;">
+                            <div style="font-size: 0.85rem; color: #94a3b8; text-transform: uppercase;">Average RT</div>
+                            <div style="font-size: 2rem; font-weight: 700; margin-top: 10px;">{int(perf['avg_rt'])}ms</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="table-wrap">
-                    <h3>DAST (ZAP) Trends</h3>
-                    <table>
-                        <tr><th>Alert Level</th><th>Progress</th><th>Result</th></tr>
-                        <tr><td>High</td><td><div class="bar-container"><div class="bar-fill" style="width: {min(100, zap['high']*25)}%; background: var(--error);"></div></div></td><td>{zap['high']}</td></tr>
-                        <tr><td>Medium</td><td><div class="bar-container"><div class="bar-fill" style="width: {min(100, zap['medium']*10)}%; background: #fb7185;"></div></div></td><td>{zap['medium']}</td></tr>
-                        <tr><td>Low</td><td><div class="bar-container"><div class="bar-fill" style="width: {min(100, zap['low']*5)}%; background: #94a3b8;"></div></div></td><td>{zap['low']}</td></tr>
-                    </table>
+
+                <!-- SAST SECTION -->
+                <div id="sast" style="margin-bottom: 80px; scroll-margin-top: 40px;">
+                    <h2 style="border-left: 4px solid #818cf8; padding-left: 15px; margin-bottom: 30px;">🔍 SAST: Full Code Finding Registry</h2>
+                    <div style="background: #1e293b; border-radius: 16px; overflow: hidden; border: 1px solid #334155;">
+                        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                            <thead style="background: #0f172a;">
+                                <tr><th style="padding:15px; color:#94a3b8;">Issue Message</th><th style="padding:15px; color:#94a3b8;">Component / File</th></tr>
+                            </thead>
+                            <tbody>{sonar_rows or '<tr><td colspan="2" style="padding:20px; text-align:center; color:#64748b;">No security issues found by SonarQube</td></tr>'}</tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- SCA SECTION -->
+                <div id="sca" style="margin-bottom: 80px; scroll-margin-top: 40px;">
+                    <h2 style="border-left: 4px solid #f97316; padding-left: 15px; margin-bottom: 30px;">📦 SCA: Detailed Dependency Audit</h2>
+                    <div style="background: #1e293b; border-radius: 16px; overflow: hidden; border: 1px solid #334155;">
+                        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                            <thead style="background: #0f172a;">
+                                <tr><th style="padding:15px; color:#94a3b8;">Package</th><th style="padding:15px; color:#94a3b8;">Severity</th><th style="padding:15px; color:#94a3b8;">Recommended Action</th></tr>
+                            </thead>
+                            <tbody>{sca_rows or '<tr><td colspan="3" style="padding:20px; text-align:center; color:#64748b;">No dependency vulnerabilities found</td></tr>'}</tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- DAST SECTION -->
+                <div id="dast" style="margin-bottom: 80px; scroll-margin-top: 40px;">
+                    <h2 style="border-left: 4px solid #fb7185; padding-left: 15px; margin-bottom: 30px;">🕷️ DAST: Full Penetration Test Results</h2>
+                    <div style="background: #1e293b; border-radius: 16px; overflow: hidden; border: 1px solid #334155;">
+                        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                            <thead style="background: #0f172a;">
+                                <tr><th style="padding:15px; color:#94a3b8;">Alert Type</th><th style="padding:15px; color:#94a3b8;">Risk</th><th style="padding:15px; color:#94a3b8;">Expert Remediation</th></tr>
+                            </thead>
+                            <tbody>{zap_rows or '<tr><td colspan="3" style="padding:20px; text-align:center; color:#64748b;">No active scan alerts reported by ZAP</td></tr>'}</tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- PERFORMANCE SECTION -->
+                <div id="perf" style="margin-bottom: 80px; scroll-margin-top: 40px;">
+                    <h2 style="border-left: 4px solid #22d3ee; padding-left: 15px; margin-bottom: 30px;">⚡ Performance: Global Endpoint Metrics</h2>
+                    <div style="background: #1e293b; border-radius: 16px; overflow: hidden; border: 1px solid #334155;">
+                        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                            <thead style="background: #0f172a;">
+                                <tr><th style="padding:15px; color:#94a3b8;">Endpoint Path</th><th style="padding:15px; color:#94a3b8;">Samples</th><th style="padding:15px; color:#94a3b8;">Avg Latency</th><th style="padding:15px; color:#94a3b8;">Error Count</th></tr>
+                            </thead>
+                            <tbody>{perf_rows or '<tr><td colspan="4" style="padding:20px; text-align:center; color:#64748b;">No JMeter results available</td></tr>'}</tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div style="border-top: 1px solid #334155; padding-top: 40px; text-align: center; color: #475569; font-size: 0.9rem;">
+                    SHIVA AI Cyber-Security Intelligence Suite &copy; 2026 | Automated DevSecOps Pipeline
                 </div>
             </div>
-            
-            <footer style="text-align: center; margin-top: 80px; padding: 40px; border-top: 1px solid var(--border); color: #475569; font-size: 0.9rem;">
-                DevSecOps AI Insights Engine &copy; 2026 | Powered by Antigravity
-            </footer>
         </div>
     </body>
     </html>
@@ -239,7 +248,7 @@ def generate_dashboard():
     
     with open(OUTPUT_FILE, "w") as f:
         f.write(html_content)
-    print(f"Ultra-Premium Dashboard generated at: {OUTPUT_FILE}")
+    print(f"Professional Dashboard generated at: {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     generate_dashboard()
