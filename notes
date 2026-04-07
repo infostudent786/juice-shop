@@ -1,3 +1,7 @@
+sudo chmod -R 777 /var/lib/jenkins/workspace/devsecops-cicd/reports
+===========================================================
+
+
 # DevSecOps Pipeline: Execution Guide
 
 This guide explains how to set up your repository for the JMeter and AI Dashboard integration and how to run components manually.
