@@ -4,7 +4,7 @@ pipeline {
     environment {
         // SonarQube settings
         SCANNER_HOME          = tool 'sonar-scanner'
-        SONAR_URL             = 'http://65.1.109.17:9000' + sh(script: "hostname -I | awk '{print \$1}'", returnStdout: true).trim() + ':9000'
+        SONAR_URL             = 'http://65.1.109.17:9000'
         SONAR_PROJECT_KEY     = 'juice-shop'
         SONAR_PROJECT_NAME    = 'OWASP-Juice-Shop'
         SONAR_TOKEN           = credentials('sonar-token')
@@ -13,7 +13,7 @@ pipeline {
         CHROME_BIN            = '/usr/bin/google-chrome'
         PATH                  = "/usr/local/bin:${env.PATH}"
         REPORTS_DIR           = "${WORKSPACE}/reports"
-        APP_URL               = 'http://localhost:3000'
+        APP_URL               = 'http://65.1.109.17:3000'
     }
 
     stages {
@@ -21,7 +21,7 @@ pipeline {
         stage('Git Checkout') {
             steps {
                 echo "📦 Cloning Juice Shop repository..."
-                git branch: 'master', url: 'https://github.com/infostudent786/juice-shop.git'
+                git branch: 'master', url: 'https://github.com/juice-shop/juice-shop.git'
                 sh 'mkdir -p ${REPORTS_DIR}'
                 // Note: jmeter-test.jmx and ai-dashboard.py should already exist in the repo root
             }
