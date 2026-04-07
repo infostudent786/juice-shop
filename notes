@@ -1,0 +1,77 @@
+# DevSecOps Pipeline: Execution Guide
+
+This guide explains how to set up your repository for the JMeter and AI Dashboard integration and how to run components manually.
+
+## 1. Repository Setup
+
+For the Jenkins pipeline to work, ensure the following files are in the **root directory** of your repository:
+
+- `Jenkinsfile`
+- `jmeter-test.jmx`
+- `ai-dashboard.py`
+
+When Jenkins clones the repository, it will find these files automatically.
+
+## 2. Using the AI Security Dashboard in Jenkins
+
+Once the pipeline finishes:
+1. Go to your Jenkins Job page.
+2. Look for the **🛡️ AI Security Dashboard** link in the left sidebar.
+3. Click it to see the unified security and performance report.
+
+> [!NOTE]
+> If the link doesn't show properly, ensure the **HTML Publisher Plugin** is installed in Jenkins.
+
+## 3. Manual Execution (For Testing)
+
+If you want to generate the dashboard manually on your EC2 instance:
+
+### Run the AI Dashboard Script
+```bash
+# Ensure you have some reports in a 'reports' directory
+python3 ai-dashboard.py
+```
+This will generate `reports/dashboard.html`.
+
+### Run JMeter Manually
+```bash
+jmeter -n -t jmeter-test.jmx -l reports/manual-results.jtl -e -o reports/manual-html
+```
+
+## 4. SonarQube & App Access
+
+- **SonarQube**: `http://<your-ec2-ip>:9000` (admin/admin)
+- **Juice Shop App**: `http://<your-ec2-ip>:3000`
+
+> [!TIP]
+> If you cannot access these ports, check your **AWS EC2 Security Group** and ensure ports 8080 (Jenkins), 9000 (SonarQube), and 3000 (App) are open for your IP.
+====================================================================================
+
+
+jmeter install
+---------------------
+
+
+# ── 7. Apache JMeter ──────────────────────────────────────────
+echo "[7/10] Installing Apache JMeter 5.6.3..."
+JMETER_VERSION="5.6.3"
+JMETER_URL="https://downloads.apache.org/jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz"
+cd /tmp
+wget -q "${JMETER_URL}" -O jmeter.tgz
+sudo tar -xzf jmeter.tgz -C /opt/
+sudo mv /opt/apache-jmeter-${JMETER_VERSION} /opt/apache-jmeter
+sudo chmod +x /opt/apache-jmeter/bin/jmeter
+sudo ln -sf /opt/apache-jmeter/bin/jmeter /usr/local/bin/jmeter
+echo "JMeter: $(jmeter --version 2>&1 | head -1)"
+
+
+optional [ check-once]
+
+echo "[1/10] Updating system packages..."
+sudo apt-get update -y && sudo apt-get upgrade -y
+sudo apt-get install -y \
+    curl wget unzip git gnupg2 software-properties-common \
+    python3 python3-pip python3-venv \
+    apt-transport-https ca-certificates lsb-release \
+    fontconfig libfreetype6 libx11-6 libxext6 libxrender1 \
+    xvfb jq net-tools
