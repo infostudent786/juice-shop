@@ -13,7 +13,7 @@ pipeline {
         CHROME_BIN            = '/usr/bin/google-chrome'
         PATH                  = "/usr/local/bin:${env.PATH}"
         REPORTS_DIR           = "${WORKSPACE}/reports"
-        APP_URL               = 'http://65.1.109.17:3000'
+        APP_URL               = 'http://localhost:3000'
     }
 
     stages {
