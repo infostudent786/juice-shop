@@ -14,6 +14,7 @@ BUILD_NUMBER = os.getenv("BUILD_NUMBER", "local")
 JOB_NAME    = os.getenv("JOB_NAME", "devsecops-juice-shop")
 BUILD_URL   = os.getenv("BUILD_URL", "#")
 APP_URL     = os.getenv("APP_URL", "http://localhost:3000")
+LLM_API     = os.getenv("LLM_API", "http://localhost:8080")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OWASP Top 10 (2021) knowledge base
@@ -663,6 +664,11 @@ def generate_dashboard():
     # Perf rows
     perf_rows = ""
     for label, ep in perf.get("endpoints",{}).items():
+        # Color & Bar logic
+        pct = min(100, (ep["p95"] / 1000) * 100)
+        p95_col = "#34d399" if ep["p95"] < 200 else "#fbbf24" if ep["p95"] < 500 else "#f87171"
+        err_col = "#34d399" if ep["errors"] == 0 else "#f87171"
+
         p95_html = f'''<div class="perf-bar-wrap">
     <span style="color:{p95_col};font-weight:700;min-width:60px;font-family:\'Space Mono\',monospace">{ep["p95"]}ms</span>
     <div class="perf-bar"><div class="perf-fill" style="width:{pct}%;background:{p95_col}"></div></div>
@@ -1183,6 +1189,55 @@ tr:hover {{ background: rgba(34,211,238,0.03); }}
   50% {{ opacity: 0.5; }}
 }}
 .live-dot {{ animation: pulse 2s infinite; }}
+
+/* ── AI CHAT ASSISTANT ── */
+#chat-bubble {{
+  position: fixed; bottom: 30px; right: 30px;
+  width: 60px; height: 60px; border-radius: 50%;
+  background: var(--cyan); color: #000;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; cursor: pointer; z-index: 1000;
+  box-shadow: 0 8px 32px rgba(34,211,238,0.4);
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}}
+#chat-bubble:hover {{ transform: scale(1.1) rotate(5deg); }}
+
+#chat-window {{
+  position: fixed; bottom: 100px; right: 30px;
+  width: 380px; height: 500px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 20px; display: none; flex-direction: column;
+  z-index: 1001; box-shadow: 0 12px 48px rgba(0,0,0,0.5);
+  overflow: hidden; animation: fadeUp 0.3s ease;
+}}
+#chat-header {{
+  padding: 16px 20px; background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+}}
+#chat-messages {{
+  flex: 1; overflow-y: auto; padding: 20px;
+  display: flex; flex-direction: column; gap: 12px;
+}}
+.msg {{
+  max-width: 85%; padding: 10px 14px; border-radius: 12px;
+  font-size: 0.85rem; line-height: 1.5;
+}}
+.msg.ai {{ background: var(--bg4); color: var(--text); align-self: flex-start; border-left: 3px solid var(--cyan); }}
+.msg.user {{ background: var(--cyan); color: #000; align-self: flex-end; font-weight: 600; }}
+
+#chat-input-area {{
+  padding: 16px; background: var(--bg3); border-top: 1px solid var(--border);
+  display: flex; gap: 10px;
+}}
+#chat-input {{
+  flex: 1; background: var(--bg0); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text); padding: 8px 12px; outline: none;
+}}
+#chat-send {{
+  background: var(--cyan); color: #000; border: none;
+  padding: 0 16px; border-radius: 8px; font-weight: 800; cursor: pointer;
+}}
 """
 
     # ─── HTML ─────────────────────────────────────────────────────────────────
@@ -1544,6 +1599,93 @@ tr:hover {{ background: rgba(34,211,238,0.03); }}
     os.makedirs(REPORTS_DIR, exist_ok=True)
     with open(OUTPUT_FILE, "w") as f:
         f.write(html)
+    
+    # ─── INJECT INTERACTIVE CHAT SCRIPT ────────────────────────────────────────
+    # We append this separately to avoid f-string escaping nightmare for complex JS
+    context_data = {
+        "score": score,
+        "grade": grade,
+        "risk": risk,
+        "summary": summary[:500].replace('"',"'").replace('\n',' ')
+    }
+    
+    chat_html = f'''
+<!-- AI CHAT WIDGET -->
+<div id="chat-bubble" onclick="toggleChat()">🤖</div>
+<div id="chat-window">
+  <div id="chat-header">
+    <span class="glow-dot" style="background:var(--cyan);box-shadow:0 0 8px var(--cyan)"></span>
+    <span style="font-weight:800;font-size:0.9rem">SHIVA Security Assistant</span>
+    <button onclick="toggleChat()" style="margin-left:auto;background:none;border:none;color:var(--dim);cursor:pointer">✕</button>
+  </div>
+  <div id="chat-messages">
+    <div class="msg ai">Hello! I am SHIVA AI. I have analyzed Build #{BUILD_NUMBER}. We have a <b>Grade {grade}</b> with {risk} risk. How can I help you fix these vulnerabilities?</div>
+  </div>
+  <div id="chat-input-area">
+    <input type="text" id="chat-input" placeholder="Ask AI about this build..." onkeypress="if(event.key==='Enter') sendMessage()">
+    <button id="chat-send" onclick="sendMessage()">SEND</button>
+  </div>
+</div>
+
+<script>
+const LLM_API = "{LLM_API}";
+const CONTEXT = {json.dumps(context_data)};
+
+function toggleChat() {{
+    const win = document.getElementById("chat-window");
+    win.style.display = win.style.display === "flex" ? "none" : "flex";
+}}
+
+async function sendMessage() {{
+    const input = document.getElementById("chat-input");
+    const msg = input.value.trim();
+    if(!msg) return;
+
+    appendMessage("user", msg);
+    input.value = "";
+    
+    const aiMsgDiv = appendMessage("ai", "Thinking...");
+    
+    try {{
+        const response = await fetch(LLM_API + "/v1/chat/completions", {{
+            method: "POST",
+            headers: {{"Content-Type": "application/json"}},
+            body: JSON.stringify({{
+                messages: [
+                    {{role: "system", content: "You are a DevSecOps assistant for OWASP Juice Shop. Current Build Context: Grade " + CONTEXT.grade + ", Score " + CONTEXT.score + ", Risk " + CONTEXT.risk + ". Summary: " + CONTEXT.summary}},
+                    {{role: "user", content: msg}}
+                ],
+                temperature: 0.1,
+                max_tokens: 400
+            }})
+        }});
+        
+        const data = await response.json();
+        aiMsgDiv.innerText = data.choices[0].message.content;
+    }} catch(e) {{
+        aiMsgDiv.innerText = "Error: Could not connect to SHIVA AI engine at " + LLM_API;
+        aiMsgDiv.style.color = "var(--red)";
+    }}
+    
+    const chatMsgs = document.getElementById("chat-messages");
+    chatMsgs.scrollTop = chatMsgs.scrollHeight;
+}}
+
+function appendMessage(role, text) {{
+    const container = document.getElementById("chat-messages");
+    const div = document.createElement("div");
+    div.className = "msg " + role;
+    div.innerText = text;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    return div;
+}}
+</script>
+</body>
+</html>'''
+    
+    with open(OUTPUT_FILE, "a") as f:
+        f.write(chat_html)
     print(f"\n  Dashboard → {OUTPUT_FILE}")
     print(f"  Score: {score}/100 | Grade: {grade} | Build: {decision}")
     print("=== Done ===\n")
