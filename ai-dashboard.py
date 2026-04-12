@@ -663,17 +663,15 @@ def generate_dashboard():
     # Perf rows
     perf_rows = ""
     for label, ep in perf.get("endpoints",{}).items():
-        p95_col = "#f87171" if ep["p95"] > 3000 else "#fbbf24" if ep["p95"] > 1500 else "#34d399"
-        err_col = "#f87171" if ep["error_rate"] > 5 else "#34d399"
-        pct     = min(100, int(ep["p95"] / 30))
+        p95_html = f'''<div class="perf-bar-wrap">
+    <span style="color:{p95_col};font-weight:700;min-width:60px;font-family:\'Space Mono\',monospace">{ep["p95"]}ms</span>
+    <div class="perf-bar"><div class="perf-fill" style="width:{pct}%;background:{p95_col}"></div></div>
+  </div>'''
         perf_rows += f'''<tr>
   {td(f'<code class="pkg-name">{label}</code>')}
   {td(f'<span class="dim-text">{ep["count"]}</span>')}
   {td(f'<span class="dim-text">{round(ep["avg"])}ms</span>')}
-  {td(f'''<div class="perf-bar-wrap">
-    <span style="color:{p95_col};font-weight:700;min-width:60px;font-family:\'Space Mono\',monospace">{ep["p95"]}ms</span>
-    <div class="perf-bar"><div class="perf-fill" style="width:{pct}%;background:{p95_col}"></div></div>
-  </div>''')}
+  {td(p95_html)}
   {td(f'<span style="color:{err_col};font-weight:700;font-family:\'Space Mono\',monospace">{ep["error_rate"]}%</span>')}
   {td(f'<span class="dim-text">{ep["errors"]}</span>')}
 </tr>'''
