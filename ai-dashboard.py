@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI — Free DevSecOps Intelligence Dashboard
+SHIVABOT AI — Free DevSecOps Intelligence Dashboard
 Expert-system AI engine: zero API cost, full OWASP Top 10 coverage,
 deterministic security analysis derived entirely from scan outputs.
 """
@@ -677,10 +677,16 @@ def generate_dashboard():
 </tr>'''
 
     # Compliance rows
-    comp_html = "".join(
-        f'<div class="compliance-item"><span class="comp-icon">⚠</span><span>{note}</span></div>'
-        for note in comp
-    ) or '<div class="compliance-item no-comp"><span class="comp-icon ok">✓</span><span>No active compliance violations detected.</span></div>'
+    comp_html = ""
+    if isinstance(comp, list):
+        for note in comp:
+            if note:
+                comp_html += f'<div class="compliance-item"><span class="comp-icon">⚠</span><span>{note}</span></div>'
+    elif isinstance(comp, str) and comp:
+        comp_html = f'<div class="compliance-item"><span class="comp-icon">⚠</span><span>{comp}</span></div>'
+    
+    if not comp_html:
+        comp_html = '<div class="compliance-item no-comp"><span class="comp-icon ok">✓</span><span>No active compliance violations detected.</span></div>'
 
     llm_analysis_html = f'''
     <section id="llm-analysis" class="section">
