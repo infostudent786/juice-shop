@@ -522,6 +522,16 @@ def generate_dashboard():
     sonar_summary  = load_json("sonar-summary.json") or {"critical": 0, "major": 0}
     sonar_issues   = load_json("sonar-issues.json")  or {"issues": []}
 
+    llm_path = os.path.join(REPORTS_DIR, "llm-analysis.json")
+    llm_ai_summary = "No LLM AI analysis available"
+    try:
+        if os.path.exists(llm_path):
+            with open(llm_path) as f:
+                data = json.load(f)
+                llm_ai_summary = data["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(f"  [WARN] llm-analysis: {e}")
+
     print(f"  SCA:  {sca['total']} vulns  ({sca['critical']} critical)")
     print(f"  DAST: {zap['total']} alerts ({zap['high']} high)")
     print(f"  SAST: {sonar_summary.get('critical',0)} critical")
@@ -661,6 +671,21 @@ def generate_dashboard():
         f'<div class="compliance-item"><span class="comp-icon">⚠</span><span>{note}</span></div>'
         for note in comp
     ) or '<div class="compliance-item no-comp"><span class="comp-icon ok">✓</span><span>No active compliance violations detected.</span></div>'
+
+    llm_analysis_html = f'''
+    <section id="llm-analysis" class="section">
+      <div class="section-header">
+        <div class="section-bar" style="background:var(--purple);box-shadow:0 0 10px rgba(167,139,250,0.5)"></div>
+        <span class="section-title">🤖 LLM AI Security Deep-Dive</span>
+      </div>
+      <div class="summary-card">
+        <div class="summary-header">
+          <span class="glow-dot live-dot" style="background:var(--purple);box-shadow:0 0 8px var(--purple)"></span>
+          <span class="summary-title">Advanced LLM Reasoning</span>
+        </div>
+        <div class="summary-body" style="white-space: pre-wrap; font-family: var(--font-mono); font-size: 0.8rem; border-left-color: var(--purple);">{llm_ai_summary}</div>
+      </div>
+    </section>'''
 
     d_class = "pass" if decision == "PASS" else "fail"
     d_icon = "✓" if decision == "PASS" else "✗"
@@ -1195,6 +1220,7 @@ tr:hover {{ background: rgba(34,211,238,0.03); }}
     <div class="nav-label">Navigation</div>
     <a class="nav-link" href="#overview"><span class="nav-icon">◈</span>Overview</a>
     <a class="nav-link" href="#ai-analysis"><span class="nav-icon">◎</span>AI Analysis</a>
+    <a class="nav-link" href="#llm-analysis"><span class="nav-icon">🤖</span>LLM Analysis</a>
     <a class="nav-link" href="#owasp"><span class="nav-icon">⬡</span>OWASP Top 10</a>
     <a class="nav-link" href="#remediations"><span class="nav-icon">⬢</span>Remediations</a>
     <a class="nav-link" href="#sast"><span class="nav-icon">◉</span>SAST — Sonar</a>
@@ -1341,6 +1367,8 @@ tr:hover {{ background: rgba(34,211,238,0.03); }}
         </div>
       </div>
     </section>
+
+    {llm_analysis_html}
 
     <!-- ══ OWASP ══ -->
     <section id="owasp" class="section">
