@@ -134,7 +134,7 @@ def parse_npm_audit(filename="npm-audit.json"):
 
 def parse_zap(filename="zap-report.json"):
     result = {"total": 0, "high": 0, "medium": 0, "low": 0, "informational": 0, "findings": []}
-    data = load_json(filename)
+    data = load_json(filename) or load_json("zap.json")
     if not data:
         return result
     for site in data.get("site", []):
@@ -520,15 +520,27 @@ def generate_dashboard():
     zap            = parse_zap()
     perf           = parse_jmeter()
     sonar_summary  = load_json("sonar-summary.json") or {"critical": 0, "major": 0}
-    sonar_issues   = load_json("sonar-issues.json")  or {"issues": []}
+    sonar_issues   = load_json("sonar-issues.json")  or load_json("sonar.json") or {"issues": []}
+
+    # Calculate summary from issues if summary file is missing or empty
+    if sonar_summary == {"critical": 0, "major": 0} and sonar_issues.get("issues"):
+        for iss in sonar_issues["issues"]:
+            sev = iss.get("severity", "").upper()
+            if sev in ("CRITICAL", "BLOCKER"):
+                sonar_summary["critical"] += 1
+            elif sev in ("MAJOR",):
+                sonar_summary["major"] += 1
 
     llm_path = os.path.join(REPORTS_DIR, "llm-analysis.json")
+    if not os.path.exists(llm_path):
+        llm_path = os.path.join(REPORTS_DIR, "llm-response.json")
+    
     llm_ai_summary = "No LLM AI analysis available"
     try:
         if os.path.exists(llm_path):
             with open(llm_path) as f:
                 data = json.load(f)
-                llm_ai_summary = data["choices"][0]["message"]["content"]
+                llm_ai_summary = data.get("choices", [{}])[0].get("message", {}).get("content", "AI Analysis parsing error")
     except Exception as e:
         print(f"  [WARN] llm-analysis: {e}")
 
