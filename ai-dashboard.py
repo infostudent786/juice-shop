@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SHIVABOT AI — Free DevSecOps Intelligence Dashboard
+AI — Free DevSecOps Intelligence Dashboard
 Expert-system AI engine: zero API cost, full OWASP Top 10 coverage,
 deterministic security analysis derived entirely from scan outputs.
 """
