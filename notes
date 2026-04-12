@@ -218,6 +218,11 @@ FOLLOW THIS STEPS VERY IMPORTANT
    34  docker ps -a
    35  history
 root@ip-172-31-44-202:~# 
+
+========================================================
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs && node -v && npm -v && df -h && sudo npm install -g yarn && yarn -v && sudo npm install -g yarn && sudo usermod -aG docker jenkins && sudo systemctl restart jenkins && sudo apt update && sudo apt install -y wget gnupg2 && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add - && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list && sudo apt update && sudo apt install -y google-chrome-stable && docker ps
+
+==========================================================
 --------------------------------------------------------------------------------------------------------------
 
 echo "[7/10] Installing Apache JMeter 5.6.3..."
