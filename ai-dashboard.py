@@ -101,7 +101,7 @@ def load_json(filename):
     path = os.path.join(REPORTS_DIR, filename)
     if os.path.exists(path):
         try:
-            with open(path) as f:
+            with open(path, encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
             print(f"  [WARN] {filename}: {e}")
@@ -166,7 +166,7 @@ def parse_jmeter(filename="jmeter-results.jtl"):
         return result
     try:
         rows = []
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 rows.append(row)
@@ -517,7 +517,7 @@ def td(content, cls=""):
     return f'<td class="{cls}">{content}</td>'
 
 def generate_dashboard():
-    print("\n=== SHIVA AI — Free Security Intelligence Engine ===")
+    print("\n=== SHIVA AI -- Free Security Intelligence Engine ===")
     print("Loading scan reports...")
 
     sca            = parse_npm_audit()
@@ -542,9 +542,14 @@ def generate_dashboard():
     llm_ai_summary = "No LLM AI analysis available"
     try:
         if os.path.exists(llm_path):
-            with open(llm_path) as f:
+            with open(llm_path, encoding='utf-8') as f:
                 data = json.load(f)
-                llm_ai_summary = data.get("choices", [{}])[0].get("message", {}).get("content", "AI Analysis parsing error")
+                if "choices" in data:
+                    llm_ai_summary = data.get("choices", [{}])[0].get("message", {}).get("content", "AI Analysis parsing error")
+                elif "error" in data:
+                    llm_ai_summary = f"LLM API Error: {data['error'].get('message', 'Unknown error')}"
+                else:
+                    llm_ai_summary = "Unexpected LLM Response format"
     except Exception as e:
         print(f"  [WARN] llm-analysis: {e}")
 
@@ -572,7 +577,8 @@ def generate_dashboard():
     for f in sca.get("findings", []):
         detailed_findings.append(f"SCA: {f['package']} ({f['severity']}) - {f.get('fix','')}")
     for f in zap.get("findings", []):
-        detailed_findings.append(f"DAST: {f['name']} ({f['risk']}) - {f.get('instances',[u])[0]}")
+        first_instance = f.get("instances", [""])[0] if f.get("instances") else ""
+        detailed_findings.append(f"DAST: {f['name']} ({f['risk']}) - {first_instance}")
     for iss in sonar_issues.get("issues", []):
         detailed_findings.append(f"SAST: {iss.get('message')} in {iss.get('component','').split(':')[-1]}")
     for label, ep in perf.get("endpoints", {}).items():
@@ -687,7 +693,7 @@ def generate_dashboard():
         err_col = "#34d399" if ep["errors"] == 0 else "#f87171"
 
         p95_html = f'''<div class="perf-bar-wrap">
-    <span style="color:{p95_col};font-weight:700;min-width:60px;font-family:\'Space Mono\',monospace">{ep["p95"]}ms</span>
+    <span style="color:{p95_col};font-weight:700;min-width:60px;font-family:Space Mono,monospace">{ep["p95"]}ms</span>
     <div class="perf-bar"><div class="perf-fill" style="width:{pct}%;background:{p95_col}"></div></div>
   </div>'''
         perf_rows += f'''<tr>
@@ -695,7 +701,7 @@ def generate_dashboard():
   {td(f'<span class="dim-text">{ep["count"]}</span>')}
   {td(f'<span class="dim-text">{round(ep["avg"])}ms</span>')}
   {td(p95_html)}
-  {td(f'<span style="color:{err_col};font-weight:700;font-family:\'Space Mono\',monospace">{ep["error_rate"]}%</span>')}
+  {td(f'<span style="color:{err_col};font-weight:700;font-family:Space Mono,monospace">{ep["error_rate"]}%</span>')}
   {td(f'<span class="dim-text" style="font-size:0.7rem">{ep["error_details"]}</span>')}
 </tr>'''
 
@@ -1614,7 +1620,7 @@ tr:hover {{ background: rgba(34,211,238,0.03); }}
 </html>"""
 
     os.makedirs(REPORTS_DIR, exist_ok=True)
-    with open(OUTPUT_FILE, "w") as f:
+    with open(OUTPUT_FILE, "w", encoding='utf-8') as f:
         f.write(html)
     
     # ─── INJECT INTERACTIVE CHAT SCRIPT ────────────────────────────────────────
@@ -1670,8 +1676,8 @@ async function sendMessage() {{
             headers: {{"Content-Type": "application/json"}},
             body: JSON.stringify({{
                 messages: [
-                    {role: "system", content: "You are a DevSecOps assistant for OWASP Juice Shop. Build Information: Grade " + CONTEXT.grade + ", Score " + CONTEXT.score + ", Risk " + CONTEXT.risk + ". Summary: " + CONTEXT.summary + ". Detailed Findings/Errors: " + CONTEXT.detailed_errors + ". Instructions: Use this specific context to answer troubleshooting and remediation questions. If many errors occur, prioritize explaining the root cause."},
-                    {role: "user", content: msg}
+                    {{role: "system", content: "You are a DevSecOps assistant for OWASP Juice Shop. Build Information: Grade " + CONTEXT.grade + ", Score " + CONTEXT.score + ", Risk " + CONTEXT.risk + ". Summary: " + CONTEXT.summary + ". Detailed Findings/Errors: " + CONTEXT.detailed_errors + ". Instructions: Use this specific context to answer troubleshooting and remediation questions. If many errors occur, prioritize explaining the root cause."}},
+                    {{role: "user", content: msg}}
                 ],
                 temperature: 0.1,
                 max_tokens: 400
@@ -1702,9 +1708,9 @@ function appendMessage(role, text) {{
 </body>
 </html>'''
     
-    with open(OUTPUT_FILE, "a") as f:
+    with open(OUTPUT_FILE, "a", encoding='utf-8') as f:
         f.write(chat_html)
-    print(f"\n  Dashboard → {OUTPUT_FILE}")
+    print(f"\n  Dashboard -> {OUTPUT_FILE}")
     print(f"  Score: {score}/100 | Grade: {grade} | Build: {decision}")
     print("=== Done ===\n")
 
