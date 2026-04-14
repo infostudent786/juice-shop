@@ -1733,7 +1733,7 @@ async function sendMessage() {{
                     {{role: "user", content: msg}}
                 ],
                 temperature: 0.1,
-                max_tokens: 400
+                max_tokens: 250
             }})
         }});
         
