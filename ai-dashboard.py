@@ -178,15 +178,17 @@ def parse_jmeter(filename="jmeter-results.jtl"):
             label   = row.get("label", row.get("s","unknown"))
             elapsed = int(row.get("elapsed", row.get("t",0)))
             success = str(row.get("success", row.get("s","true"))).lower() == "true"
+            resp_msg = row.get("responseMessage", row.get("failureMessage", "Error"))
             result["samples"] += 1
             all_rt.append(elapsed)
             if not success:
                 result["errors"] += 1
             if label not in ep_data:
-                ep_data[label] = {"times":[],"errors":0}
+                ep_data[label] = {"times":[], "errors":0, "err_msgs": set()}
             ep_data[label]["times"].append(elapsed)
             if not success:
                 ep_data[label]["errors"] += 1
+                if resp_msg: ep_data[label]["err_msgs"].add(resp_msg)
         all_rt_s = sorted(all_rt)
         n = len(all_rt_s)
         result["avg_rt"]    = round(sum(all_rt)/n, 1)
@@ -204,7 +206,8 @@ def parse_jmeter(filename="jmeter-results.jtl"):
                 "p95":   p95,
                 "max":   ts[-1],
                 "errors": d["errors"],
-                "error_rate": round(d["errors"]/cnt*100, 2)
+                "error_rate": round(d["errors"]/cnt*100, 2),
+                "error_details": ", ".join(list(d["err_msgs"])[:3])
             }
     except Exception as e:
         print(f"  [WARN] jmeter parse: {e}")
@@ -564,6 +567,20 @@ def generate_dashboard():
     err_rate_val = round(perf["errors"] / max(perf["samples"],1) * 100, 1)
     owasp_hit_count = len(ai.owasp_hits)
 
+    # ─── COMPIL DETAILED ERROR CONTEXT FOR AI ───
+    detailed_findings = []
+    for f in sca.get("findings", []):
+        detailed_findings.append(f"SCA: {f['package']} ({f['severity']}) - {f.get('fix','')}")
+    for f in zap.get("findings", []):
+        detailed_findings.append(f"DAST: {f['name']} ({f['risk']}) - {f.get('instances',[u])[0]}")
+    for iss in sonar_issues.get("issues", []):
+        detailed_findings.append(f"SAST: {iss.get('message')} in {iss.get('component','').split(':')[-1]}")
+    for label, ep in perf.get("endpoints", {}).items():
+        if ep["errors"] > 0:
+            detailed_findings.append(f"Perf Error at {label}: {ep['error_details']}")
+    
+    full_error_context = " | ".join(detailed_findings)
+
     print(f"  Score: {score}/100 | Grade: {grade} | Risk: {risk} | Build: {decision}")
 
     # Score ring SVG
@@ -679,7 +696,7 @@ def generate_dashboard():
   {td(f'<span class="dim-text">{round(ep["avg"])}ms</span>')}
   {td(p95_html)}
   {td(f'<span style="color:{err_col};font-weight:700;font-family:\'Space Mono\',monospace">{ep["error_rate"]}%</span>')}
-  {td(f'<span class="dim-text">{ep["errors"]}</span>')}
+  {td(f'<span class="dim-text" style="font-size:0.7rem">{ep["error_details"]}</span>')}
 </tr>'''
 
     # Compliance rows
@@ -1564,7 +1581,7 @@ tr:hover {{ background: rgba(34,211,238,0.03); }}
       </div>
 
       {make_table(
-        ["Endpoint", "Samples", "Avg RT", "P95 + Bar", "Error %", "Errors"],
+        ["Endpoint", "Samples", "Avg RT", "P95 + Bar", "Error %", "Error Details"],
         perf_rows,
         "No JMeter data available"
       )}
@@ -1606,7 +1623,8 @@ tr:hover {{ background: rgba(34,211,238,0.03); }}
         "score": score,
         "grade": grade,
         "risk": risk,
-        "summary": summary[:500].replace('"',"'").replace('\n',' ')
+        "summary": summary[:500].replace('"',"'").replace('\n',' '),
+        "detailed_errors": full_error_context[:8000].replace('"',"'").replace('\n',' ')
     }
     
     chat_html = f'''
@@ -1652,8 +1670,8 @@ async function sendMessage() {{
             headers: {{"Content-Type": "application/json"}},
             body: JSON.stringify({{
                 messages: [
-                    {{role: "system", content: "You are a DevSecOps assistant for OWASP Juice Shop. Current Build Context: Grade " + CONTEXT.grade + ", Score " + CONTEXT.score + ", Risk " + CONTEXT.risk + ". Summary: " + CONTEXT.summary}},
-                    {{role: "user", content: msg}}
+                    {role: "system", content: "You are a DevSecOps assistant for OWASP Juice Shop. Build Information: Grade " + CONTEXT.grade + ", Score " + CONTEXT.score + ", Risk " + CONTEXT.risk + ". Summary: " + CONTEXT.summary + ". Detailed Findings/Errors: " + CONTEXT.detailed_errors + ". Instructions: Use this specific context to answer troubleshooting and remediation questions. If many errors occur, prioritize explaining the root cause."},
+                    {role: "user", content: msg}
                 ],
                 temperature: 0.1,
                 max_tokens: 400
