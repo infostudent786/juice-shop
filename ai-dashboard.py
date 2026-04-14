@@ -739,6 +739,19 @@ def generate_dashboard():
     css = f"""
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
+#troubleshoot-modal {{ display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:2000; align-items:center; justify-content:center; padding:2rem; }}
+.modal-content {{ background:var(--bg2); border:2px solid var(--border); padding:2rem; border-radius:1rem; max-width:600px; width:100%; box-shadow:0 0 50px rgba(0,0,0,0.5); position:relative; }}
+.modal-close {{ position:absolute; top:1rem; right:1.5rem; font-size:1.5rem; cursor:pointer; color:var(--dim); }}
+.modal-title {{ font-size:1.4rem; font-weight:800; color:var(--cyan); margin-bottom:1rem; font-family:Syne,sans-serif; }}
+.modal-body {{ color:var(--fg); font-size:0.9rem; line-height:1.6; }}
+.modal-body code {{ background:rgba(255,255,255,0.05); padding:2px 6px; border-radius:4px; font-family:Space Mono,monospace; color:var(--pink); }}
+.modal-body ol {{ margin-left:1.5rem; margin-top:1rem; }}
+.modal-body li {{ margin-bottom:0.8rem; }}
+.troubleshoot-link {{ color:var(--yellow); text-decoration:underline; cursor:pointer; font-weight:700; }}
+.api-config {{ margin-top:1.5rem; padding:1rem; background:rgba(255,255,255,0.03); border-radius:0.5rem; border:1px solid var(--border); }}
+.api-config input {{ background:var(--bg0); border:1px solid var(--border); color:var(--fg); padding:0.5rem; width:70%; border-radius:0.3rem; font-family:Space Mono,monospace; }}
+.api-config button {{ background:var(--cyan); color:black; border:none; padding: 0.5rem 1rem; border-radius:0.3rem; font-weight:800; cursor:pointer; margin-left:0.5rem; }}
+
 *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
 :root {{
@@ -1634,13 +1647,39 @@ tr:hover {{ background: rgba(34,211,238,0.03); }}
     }
     
     chat_html = f'''
+<!-- TROUBLESHOOT MODAL -->
+<div id="troubleshoot-modal">
+  <div class="modal-content">
+    <span class="modal-close" onclick="closeModal()">&times;</span>
+    <div class="modal-title">🛠️ SHIVA AI Connection Troubleshooter</div>
+    <div class="modal-body">
+      <p>If the AI Assistant cannot connect to the engine at <code>{LLM_API}</code>, please check the following:</p>
+      <ol>
+        <li><strong>Jenkins Security Policy (CSP):</strong> If you are viewing this via Jenkins, you <strong>must</strong> allow cross-origin requests. Run this in <strong>Jenkins > Manage Jenkins > Script Console</strong>:<br>
+          <code style="display:block; margin:0.5rem 0; padding:1rem; background:#000;">System.setProperty("hudson.model.DirectoryBrowserSupport.CSP", "")</code>
+          <em>(Refresh the page after running this)</em>
+        </li>
+        <li><strong>AWS Security Group:</strong> Ensure Port <strong>8080</strong> is open for <b>Inbound</b> traffic from your current Public IP on your EC2 instance.</li>
+        <li><strong>Browser CORS:</strong> If you see "CORS" errors in your browser console (F12), the AI server might not be allowing external origins. Verify your <code>llama-server</code> settings.</li>
+      </ol>
+      
+      <div class="api-config">
+        <label style="display:block; margin-bottom:0.5rem; font-weight:700">Override AI Engine URL:</label>
+        <input type="text" id="api-override" placeholder="http://YOUR-IP:8080">
+        <button onclick="saveApiOverride()">SAVE</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- AI CHAT WIDGET -->
 <div id="chat-bubble" onclick="toggleChat()">🤖</div>
 <div id="chat-window">
   <div id="chat-header">
     <span class="glow-dot" style="background:var(--cyan);box-shadow:0 0 8px var(--cyan)"></span>
     <span style="font-weight:800;font-size:0.9rem">SHIVA Security Assistant</span>
-    <button onclick="toggleChat()" style="margin-left:auto;background:none;border:none;color:var(--dim);cursor:pointer">✕</button>
+    <span onclick="openModal()" title="Help / Troubleshoot" style="margin-left:auto; cursor:pointer; font-size:1.1rem; filter:grayscale(1)">⚙️</span>
+    <button onclick="toggleChat()" style="margin-left:10px;background:none;border:none;color:var(--dim);cursor:pointer">✕</button>
   </div>
   <div id="chat-messages">
     <div class="msg ai">Hello! I am SHIVA AI. I have analyzed Build #{BUILD_NUMBER}. We have a <b>Grade {grade}</b> with {risk} risk. How can I help you fix these vulnerabilities?</div>
@@ -1652,12 +1691,26 @@ tr:hover {{ background: rgba(34,211,238,0.03); }}
 </div>
 
 <script>
-const LLM_API = "{LLM_API}";
+let CURRENT_API = localStorage.getItem("LLM_API_OVERRIDE") || "{LLM_API}";
 const CONTEXT = {json.dumps(context_data)};
+
+// Initialize override input
+document.getElementById("api-override").value = CURRENT_API;
 
 function toggleChat() {{
     const win = document.getElementById("chat-window");
     win.style.display = win.style.display === "flex" ? "none" : "flex";
+}}
+
+function openModal() {{ document.getElementById("troubleshoot-modal").style.display = "flex"; }}
+function closeModal() {{ document.getElementById("troubleshoot-modal").style.display = "none"; }}
+
+function saveApiOverride() {{
+    const val = document.getElementById("api-override").value.trim();
+    if (val) {{
+        localStorage.setItem("LLM_API_OVERRIDE", val);
+        location.reload();
+    }}
 }}
 
 async function sendMessage() {{
@@ -1671,12 +1724,12 @@ async function sendMessage() {{
     const aiMsgDiv = appendMessage("ai", "Thinking...");
     
     try {{
-        const response = await fetch(LLM_API + "/v1/chat/completions", {{
+        const response = await fetch(CURRENT_API + "/v1/chat/completions", {{
             method: "POST",
             headers: {{"Content-Type": "application/json"}},
             body: JSON.stringify({{
                 messages: [
-                    {{role: "system", content: "You are a DevSecOps assistant for OWASP Juice Shop. Build Information: Grade " + CONTEXT.grade + ", Score " + CONTEXT.score + ", Risk " + CONTEXT.risk + ". Summary: " + CONTEXT.summary + ". Detailed Findings/Errors: " + CONTEXT.detailed_errors + ". Instructions: Use this specific context to answer troubleshooting and remediation questions. If many errors occur, prioritize explaining the root cause."}},
+                    {{role: "system", content: "You are a DevSecOps assistant for OWASP Juice Shop. Build Information: Grade " + CONTEXT.grade + ", Score " + CONTEXT.score + ", Risk " + CONTEXT.risk + ". Summary: " + CONTEXT.summary + ". Detailed Findings/Errors: " + CONTEXT.detailed_errors + ". Instructions: Use this specific context to answer troubleshooting and remediation questions."}},
                     {{role: "user", content: msg}}
                 ],
                 temperature: 0.1,
@@ -1684,10 +1737,12 @@ async function sendMessage() {{
             }})
         }});
         
+        if (!response.ok) throw new Error("API Status " + response.status);
+        
         const data = await response.json();
         aiMsgDiv.innerText = data.choices[0].message.content;
     }} catch(e) {{
-        aiMsgDiv.innerText = "Error: Could not connect to SHIVA AI engine at " + LLM_API;
+        aiMsgDiv.innerHTML = "<b>Connection Failed!</b><br>Could not connect to AI at " + CURRENT_API + ". <br><span class='troubleshoot-link' onclick='openModal()'>Click here to Troubleshoot (Jenkins CSP/CORS)</span>";
         aiMsgDiv.style.color = "var(--red)";
     }}
     
@@ -1699,7 +1754,7 @@ function appendMessage(role, text) {{
     const container = document.getElementById("chat-messages");
     const div = document.createElement("div");
     div.className = "msg " + role;
-    div.innerText = text;
+    div.innerHTML = text; // Changed to innerHTML to allow troubleshoot link
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
     return div;
